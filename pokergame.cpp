@@ -3,6 +3,7 @@
 PokerGame::PokerGame(QObject *parent) : QObject(parent)
 {
     contPlayers = 0;
+    gameStarted = false;
     tcpServer = new QTcpServer(this);
 
     if(!tcpServer->listen(QHostAddress::Any, 49300)){
@@ -24,53 +25,38 @@ PokerGame::PokerGame(QObject *parent) : QObject(parent)
             break;
         }
     }
-    // if we did not find one, use IPv4 localhost
-    if (ipAddress.isEmpty())
+    if (ipAddress.isEmpty()) // If we did not find one, use IPv4 localhost
         ipAddress = QHostAddress(QHostAddress::LocalHost).toString();
 
     cout << "Server IP: " << ipAddress.toStdString() << " - Server port: " << tcpServer->serverPort() << endl;
-
     QObject::connect(tcpServer, &QTcpServer::newConnection, this, &PokerGame::playerConnected);
 
-    //Wait for new conections
-    // For each entry conection a new Player object will be created and pushed to the vector
 
-    tcpServer->waitForNewConnection();
+    QEventLoop loop;
+    loop.connect(this, SIGNAL(fullRoom()), SLOT(quit()));
+    loop.exec();
 
-//    QByteArray block;
-//    QDataStream out(&block, QIODevice::WriteOnly);
-//    out.setVersion(QDataStream::Qt_4_0);
-//    out << QString::fromStdString("Done");
+    for(unsigned int i=0; i<players.size(); i++){
+        players[i].playerNum = i+1;
 
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+        out << (qint8)2;
+        out << (qint8)(i+1);
+        out << (qint8)players.size();
+        for(unsigned int j=0; j<players.size(); j++)
+            out << QString::fromStdString(players[j].nickname);
+        players[i].socket->write(block);
+    }
 
-
-//    Player p(contPlayers+1,"Alan");
-//    players.push_back(p);
-//    contPlayers++;
-
-//    // Considerar que pasa si se desconecta alguien en el lobby
-
-//    // Hacer nuevo constructor con un file descriptor y nombre
-//    // Asignar números una vez empezada la partida
-
-//    Player p2(contPlayers+1,"ete sech");
-//    players.push_back(p2);
-//    contPlayers++;
-
-//    Player p3(contPlayers+1,"el pepe");
-//    players.push_back(p3);
-//    contPlayers++;
-
-//    Player p4(contPlayers+1,"bbcita bblin");
-//    players.push_back(p4);
-//    contPlayers++;
-
-//    for(unsigned int i=0; i<players.size(); i++)
-//        players[i].playerNum = i+1;
+    for(Player p : players)
+        cout << p << endl;
 
 //    //Successives matches ends when there's only one player remaining
 
 //    newGame();
+//      gameStarted = true;
 //    //while(contPlayers > 1 && newGame());
 
     return;
@@ -332,7 +318,7 @@ char* PokerGame::dealRandomCard(int s){
             int suitIndex = rand() % suits.size(); // Selects a random non empty suit
             card[0] = suits[suitIndex];
 
-            int cardsRemaining = deck[card[0]].size(); // ... Cards remaining for a given suit
+            size_t cardsRemaining = deck[card[0]].size(); // ... Cards remaining for a given suit
 
             if(!cardsRemaining) // If there're no more cards for that suit
             {
@@ -362,24 +348,6 @@ void PokerGame::whichHand(Player& p){
 
     vector<char*> gameCards;
 
-
-//    //TEST BLOCK
-//    char* tc1 = new char[2]{'S','A'};
-//    char* tc2 = new char[2]{'C','A'};
-//    char* tc3 = new char[2]{'S','4'};
-//    char* tc4 = new char[2]{'C','4'};
-//    char* tc5 = new char[2]{'S','3'};
-//    char* tc6 = new char[2]{'S','3'};
-//    char* tc7 = new char[2]{'C','2'};
-
-//    gameCards.push_back(tc1);
-//    gameCards.push_back(tc2);
-//    gameCards.push_back(tc3);
-//    gameCards.push_back(tc4);
-//    gameCards.push_back(tc5);
-//    gameCards.push_back(tc6);
-//    gameCards.push_back(tc7);
-
     for(int i=0;i<5; i++){
         char* temp = new char[2];
         temp[0] = commCards[i][0];
@@ -406,7 +374,7 @@ void PokerGame::whichHand(Player& p){
         cout << c[0] << c[1] << endl;
     }
 
-    unsigned int i = gameCards.size()-1;
+    size_t i = gameCards.size()-1;
     int seqCount = 1;
     char maxInSeq = gameCards[gameCards.size()-1][1]; // Higher card in the sequence
 
@@ -519,7 +487,7 @@ void PokerGame::whichHand(Player& p){
     for(auto e : suitsCount){
         if(e.second >= 5){ // If there are more than 5 cards of a suit
             if(p.hand[0] == 5){
-                int maxIndex = gameCards.size()-1;
+                size_t maxIndex = gameCards.size()-1;
                 int contColor = 0;
                 while(gameCards[maxIndex][1] != maxInSeq && maxIndex>0) maxIndex--;
 
@@ -547,7 +515,7 @@ void PokerGame::whichHand(Player& p){
                 }
             }
             if(p.hand[0] < 6){ // If the current hand is worse than FLUSH set FLUSH as the current hand
-                for(int it = gameCards.size()-1; it>=0; it--){ // Look for the higher card in the FLUSH
+                for(size_t it = gameCards.size()-1; it>=0; it--){ // Look for the higher card in the FLUSH
                     if(gameCards[it][0] == e.first){
                         p.hand[0] = 6; // ----- FLUSH -----
                         p.hand[1] = valToNum[gameCards[it][1]];
@@ -574,33 +542,76 @@ void PokerGame::whichHand(Player& p){
 void PokerGame::playerConnected(){
     QTcpSocket *socket = tcpServer->nextPendingConnection();
     Player p(socket);
-    connect(socket, &QTcpSocket::readyRead, this, &PokerGame::readyRead);
-    cout << "Player connected" << endl;
+    players.push_back(p);
 
-//    QByteArray data = socket->readAll();
-//    Player p(socket, "ete sech");
-//    players.push_back(p);
-//    contPlayers++;
+    connect(socket, &QTcpSocket::readyRead, this, &PokerGame::packageReceived);
+    connect(socket, &QTcpSocket::disconnected, this, &PokerGame::playerDisconnected);
+
+    cout << "Player connected" << endl;
 }
 
-void PokerGame::readyRead(){
+void PokerGame::playerDisconnected(){
     QTcpSocket* readSocket = qobject_cast<QTcpSocket*>(sender());
+
+    size_t i=0;
+    for(;i<players.size(); i++)
+        if(players[i].socket == readSocket)
+            break;
+
+    players.erase(players.begin()+i);
+    contPlayers--;
+    readSocket->close();
+    cout << "Player disconnected" << endl;
+
+    if(gameStarted){
+        // DO SOMETHING
+    }
+}
+
+void PokerGame::packageReceived(){
+    // Find the player who sent the package
+    QTcpSocket* readSocket = qobject_cast<QTcpSocket*>(sender());
+    size_t i=0;
+    for(;i<players.size(); i++)
+        if(players[i].socket == readSocket)
+            break;
+    Player* player = &players[i];
+
     QDataStream in;
     in.setDevice(readSocket);
     in.setVersion(QDataStream::Qt_4_0);
-    in.startTransaction();
 
-    QString nickname;
-    in >> nickname;
+    in.startTransaction();
+    qint8 pkgCode;
+    in >> pkgCode;
 
     if (!in.commitTransaction())
         return;
+    cout << "Package code: " << pkgCode << endl;
 
-    cout << nickname.toStdString() << endl;
+    switch(pkgCode){
 
-    QByteArray block;
-    QDataStream out(&block, QIODevice::WriteOnly);
-    out.setVersion(QDataStream::Qt_4_0);
-    out << QString::fromStdString("Done");
-    readSocket->write(block);
+    case 1:
+    {
+        in.startTransaction();
+        QString nickname;
+        in >> nickname;
+
+        if (!in.commitTransaction())
+            return;
+
+        player->nickname = nickname.toStdString();
+        contPlayers++;
+
+        if(contPlayers >= MIN_PLAYERS)
+            emit fullRoom();
+
+        cout << nickname.toStdString() << contPlayers <<endl;
+        break;
+    }
+
+    default:
+        break;
+    }
+
 }

@@ -11,13 +11,16 @@
 #include <QTcpSocket>
 #include <QNetworkInterface>
 #include <QDataStream>
+#include <QEventLoop>
 
 class PokerGame : public QObject
 {
     Q_OBJECT
 private:
     static const int INITIAL_BET = 5;
+    static const int MIN_PLAYERS = 2;
 
+    bool gameStarted;
     int turn;
     int pot;
     bool subPots;
@@ -34,7 +37,8 @@ private:
 
 private slots:
     void playerConnected();
-    void readyRead();
+    void packageReceived();
+    void playerDisconnected();
 
 public:
     explicit PokerGame(QObject *parent = nullptr);
@@ -50,7 +54,7 @@ public:
     void whichHand(Player& p);
 
 signals:
-
+    void fullRoom();
 };
 
 #endif // POKERGAME_H

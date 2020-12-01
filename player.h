@@ -22,7 +22,6 @@ class Player
 public:
     Player();
     Player(int num, string name);
-    Player(QTcpSocket *skt, string name);
     Player(QTcpSocket *skt);
     friend class PokerGame;
     void setCards(char** cards);

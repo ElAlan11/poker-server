@@ -14,18 +14,11 @@ Player::Player()
 Player::Player(QTcpSocket *skt)
 {
     socket = skt;
-//    connect(socket, &QTcpSocket::connected, this, &Player::connected);
-//    connect(socket, &QTcpSocket::disconnected, this, &Player::disconnected);
-//    connect(socket, &QTcpSocket::readyRead, this, &PokerGame::readyRead);
-
+    isAllin = false;
+    isOut = false;
+    stack = 1000;
+    secPot = 0;
 }
-
-Player::Player(QTcpSocket *skt, string name)
-{
-    socket = skt;
-    nickname = name;
-}
-
 
 Player::Player(int number, string name)
 {
