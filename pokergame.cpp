@@ -36,6 +36,8 @@ PokerGame::PokerGame(QObject *parent) : QObject(parent)
     loop.connect(this, SIGNAL(fullRoom()), SLOT(quit()));
     loop.exec();
 
+    gameStarted = true;
+
     for(unsigned int i=0; i<players.size(); i++){
         players[i].playerNum = i+1;
 
@@ -48,15 +50,12 @@ PokerGame::PokerGame(QObject *parent) : QObject(parent)
         for(unsigned int j=0; j<players.size(); j++)
             out << QString::fromStdString(players[j].nickname);
         players[i].socket->write(block);
+        players[i].socket->flush();
     }
-
-    for(Player p : players)
-        cout << p << endl;
 
 //    //Successives matches ends when there's only one player remaining
 
-//    newGame();
-//      gameStarted = true;
+    newGame();
 //    //while(contPlayers > 1 && newGame());
 
     return;
@@ -109,15 +108,19 @@ bool PokerGame::newGame(){
     //Initial bet
     for(int i=0; i<contPlayers; i++){
         if(players[i].stack < INITIAL_BET){
+
+            // -Jugador dejó la partida(10)”- PACKAGE to ALL PLAYERS
+            pkgPlayerEliminated(i);
             players.erase(players.begin()+i);
             i--;
             contPlayers--;
-            // -Jugador sin dinero- PACKAGE to ALL PLAYERS
 
-            if(contPlayers < 2)
+            if(contPlayers < 2){
+                // -Partida terminada- PACKAGE to ALL PLAYERS Code 2
+                pkgGameOver(2);
                 return false;
-        }       // -Partida termina- PACKAGE to ALL PLAYERS
-
+            }
+        }
         else{
             players[i].isAllin = false;
             players[i].isOut = false;
@@ -125,68 +128,42 @@ bool PokerGame::newGame(){
 
             players[i].bet = INITIAL_BET;
             players[i].stack -= INITIAL_BET;
-            // - Cartas personales - PACKAGE
+
+            // - New match - PACKAGE
+            pkgNewMatch(i);
         }
     }
-    //Notify the changes --> -Estado global- PACKAGE
+
+    for(Player p : players)
+        cout << p << endl;
 
     // PRE FLOP
     if(!betsRound())
         return false;
-
+/*
     // THE FLOP
     // -Cartas comunitarias- PACKAGE to ALL PLAYERS
+    pkgCommCards();
     if(!betsRound())
         return false;
 
     // THE TURN
     // -Abrir carta- PACKAGE to ALL PLAYERS
+    pkgOpenCard(3);
     if(!betsRound())
         return false;
 
     // THE RIVER
     // -Abrir carta- PACKAGE to ALL PLAYERS
+    pkgOpenCard(4);
     if(!betsRound())
         return false;
 
-    int greatest=0, indGreatest=0;
-
-    for(auto it = players.begin(); it != players.end(); it++)
-        whichHand(*it);
-
-    for(unsigned int i=0; i<players.size(); i++){
-        if(players[i].isOut)
-            continue;
-
-        if(players[i].hand[0] > greatest){
-            greatest = players[i].hand[0];
-            indGreatest = i;
-        }
-        else if(players[i].hand[0] == greatest){ // Same hand
-            if(players[i].hand[1] > players[indGreatest].hand[1]){
-                greatest = players[i].hand[0];
-                indGreatest = i;
-            }
-            else if(players[i].hand[1] == players[indGreatest].hand[1]){ // Same hand value (i.e. 2 pairs of 2)
-                if(players[i].higherCardVal() > players[indGreatest].higherCardVal()){ // Higher card wins
-                    greatest = players[i].hand[0];
-                    indGreatest = i;
-                }
-                else if(players[i].higherCardVal() == players[indGreatest].higherCardVal()){
-                    if(players[i].lowerCardVal() > players[indGreatest].lowerCardVal()){ // Higher card wins
-                        greatest = players[i].hand[0];
-                        indGreatest = i;
-                    }
-                }
-                else{
-                    //Empate
-                }
-            }
-        }
-    }
+    int winner = findWinner();
 
     // -Showdown- PACKAGE to ALL
-    while(true);
+    pkgShowdown(winner);
+//    while(true);*/
     return true;
 }
 
@@ -203,6 +180,7 @@ bool PokerGame::betsRound(){
     int noRaisedCount = 0;
 
     // Update status
+    pkgGlobalState();
 
     while(noRaisedCount != contPlayers){
         for(auto it = players.begin(); it!=players.end(); it++){
@@ -215,22 +193,25 @@ bool PokerGame::betsRound(){
                 continue;
             }
             //  -Turno de- PACKAGE
+            pkgTurnOf(it->playerNum);
 
             // Wait for respective player response and verify the origin
             // 0=Out, 1=Check/Call, 2=Raise, 3=All-in
 
-            // -------------- TEST BLOCK -----------------
-
-            int action = 0;
-            int ammount = 0;
+            QEventLoop loop;
+            loop.connect(this, SIGNAL(turnPlayed()), SLOT(quit()));
+            loop.exec();
 
             if(ammount > it->stack){
-                // Mensaje me hackearon
-                // Mensaje partida terminada
+                // -Game over- PACKAGE to ALL PLAYERS Code 1
+                pkgGameOver(1);
                 return false;
             }
 
-            // -------------------------------------------
+            if(senderPl != it->playerNum){
+                pkgGameOver(1);
+                return false;
+            }
 
             switch(action){
             case 0:
@@ -267,8 +248,11 @@ bool PokerGame::betsRound(){
                 break;
             }
 
-            // -Jugada turno- PACKAGE to ALL
+            // -Turno jugado- PACKAGE to ALL
+            pkgTurnPlayed(it->playerNum, lastBet);
+
             //  -Estatus global- PACKAGE to ALL
+            pkgGlobalState();
         }
     }
 
@@ -295,11 +279,13 @@ bool PokerGame::betsRound(){
         pot = 0; // Subsequent bet rounds will not sum again the general pot
 
         //Notify the changes (Specific message for each player's pot)
+        pkgGlobalState();
     }
     else{
         for(auto p: players)
             pot = p.bet;
         //Notify the changes (General message for all players com. plot)
+        pkgGlobalState();
     }
     return true;
 }
@@ -539,6 +525,45 @@ void PokerGame::whichHand(Player& p){
     return;
 }
 
+int PokerGame::findWinner(){
+    int greatest=0, indGreatest=0;
+
+    for(auto it = players.begin(); it != players.end(); it++)
+        whichHand(*it);
+
+    for(unsigned int i=0; i<players.size(); i++){
+        if(players[i].isOut)
+            continue;
+
+        if(players[i].hand[0] > greatest){
+            greatest = players[i].hand[0];
+            indGreatest = i;
+        }
+        else if(players[i].hand[0] == greatest){ // Same hand
+            if(players[i].hand[1] > players[indGreatest].hand[1]){
+                greatest = players[i].hand[0];
+                indGreatest = i;
+            }
+            else if(players[i].hand[1] == players[indGreatest].hand[1]){ // Same hand value (i.e. 2 pairs of 2)
+                if(players[i].higherCardVal() > players[indGreatest].higherCardVal()){ // Higher card wins
+                    greatest = players[i].hand[0];
+                    indGreatest = i;
+                }
+                else if(players[i].higherCardVal() == players[indGreatest].higherCardVal()){
+                    if(players[i].lowerCardVal() > players[indGreatest].lowerCardVal()){ // Higher card wins
+                        greatest = players[i].hand[0];
+                        indGreatest = i;
+                    }
+                }
+                else{
+                    //Empate
+                }
+            }
+        }
+    }
+    return indGreatest;
+}
+
 void PokerGame::playerConnected(){
     QTcpSocket *socket = tcpServer->nextPendingConnection();
     Player p(socket);
@@ -546,6 +571,7 @@ void PokerGame::playerConnected(){
 
     connect(socket, &QTcpSocket::readyRead, this, &PokerGame::packageReceived);
     connect(socket, &QTcpSocket::disconnected, this, &PokerGame::playerDisconnected);
+    connect(socket, &QTcpSocket::bytesWritten, this, &PokerGame::bytesWritten);
 
     cout << "Player connected" << endl;
 }
@@ -564,12 +590,22 @@ void PokerGame::playerDisconnected(){
     cout << "Player disconnected" << endl;
 
     if(gameStarted){
+
         // DO SOMETHING
     }
 }
 
+void PokerGame::bytesWritten(qint64 bytes){
+    cout << "Bytes written: " << bytes << endl;
+}
+
 void PokerGame::packageReceived(){
     // Find the player who sent the package
+
+//    bool endReached = false;
+//    while(!endReached){
+
+//    }
     QTcpSocket* readSocket = qobject_cast<QTcpSocket*>(sender());
     size_t i=0;
     for(;i<players.size(); i++)
@@ -587,7 +623,7 @@ void PokerGame::packageReceived(){
 
     if (!in.commitTransaction())
         return;
-    cout << "Package code: " << pkgCode << endl;
+    cout << "Package code: " << (int)pkgCode << endl;
 
     switch(pkgCode){
 
@@ -610,8 +646,193 @@ void PokerGame::packageReceived(){
         break;
     }
 
+    case 6:
+    {
+        in.startTransaction();
+
+        qint8 nPlayer;
+        in >> nPlayer;
+        qint8 move;
+        in >> move;
+        qint16 money;
+        in >> money;
+
+        if(!in.commitTransaction())
+            return;
+
+        action = move;
+        ammount = money;
+        senderPl = nPlayer;
+
+        emit turnPlayed();
+        break;
+    }
+
     default:
         break;
     }
 
+}
+
+void PokerGame::pkgPlayerEliminated(int nPlayer){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)10;
+        out << (qint8)players[nPlayer].playerNum;
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgGameOver(int reason){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)11;
+        out << (qint8)reason;
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgNewMatch(int nPlayer){
+    QByteArray block;
+    QDataStream out(&block, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_4_0);
+
+    out << (qint8)3;
+    out << (qint8)players[nPlayer].holeCards[0][0];
+    out << (qint8)players[nPlayer].holeCards[0][1];
+    out << (qint8)players[nPlayer].holeCards[1][0];
+    out << (qint8)players[nPlayer].holeCards[1][1];
+
+    players[nPlayer].socket->write(block);
+    players[nPlayer].socket->flush();
+}
+
+void PokerGame::pkgGlobalState(){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)4;
+        out << (qint8)contPlayers;
+
+        if(!subPots)
+            out << (qint16)pot;
+        else
+            out << (qint16)players[i].secPot;
+
+        for(unsigned int j=0; j<players.size(); j++){
+            out << (qint8)players[j].playerNum;
+            out << (qint16)players[j].bet;
+            out << (qint16)players[j].stack;
+        }
+
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgTurnOf(int nPlayer){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)5;
+        out << (qint8)nPlayer;
+
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgTurnPlayed(int nPlayer, int bet){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)6;
+        out << (qint8)nPlayer;
+        out << (qint8)action;
+        out << (qint16)bet;
+
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgCommCards(){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)7;
+        out << (qint8)commCards[0][0];
+        out << (qint8)commCards[0][1];
+        out << (qint8)commCards[1][0];
+        out << (qint8)commCards[1][1];
+        out << (qint8)commCards[2][0];
+        out << (qint8)commCards[2][1];
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgOpenCard(int indexCard){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)8;
+        out << (qint8)commCards[indexCard][0];
+        out << (qint8)commCards[indexCard][1];
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
+}
+
+void PokerGame::pkgShowdown(int numWinner){
+    for(unsigned int i=0; i<players.size(); i++){
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+        out.setVersion(QDataStream::Qt_4_0);
+
+        out << (qint8)9;
+        out << (qint8)contPlayers;
+        out << (qint8)numWinner;
+
+        if(!subPots)
+            out << (qint16)pot;
+        else{
+            unsigned int j=0;
+            for(; j<players.size(); j++)
+                if(players[j].playerNum == numWinner)
+                    break;
+            out << (qint16)players[j].secPot;
+        }
+
+        for(unsigned int j=0; j<players.size(); j++){
+            out << (qint8)players[j].playerNum;
+            out << (qint8)players[j].holeCards[0][0];
+            out << (qint8)players[j].holeCards[0][1];
+            out << (qint8)players[j].holeCards[1][0];
+            out << (qint8)players[j].holeCards[1][1];
+            out << (qint8)players[j].hand[0];
+            out << (qint8)players[j].hand[1];
+        }
+
+        players[i].socket->write(block);
+        players[i].socket->flush();
+    }
 }

@@ -18,7 +18,7 @@ class PokerGame : public QObject
     Q_OBJECT
 private:
     static const int INITIAL_BET = 5;
-    static const int MIN_PLAYERS = 2;
+    static const int MIN_PLAYERS = 3;
 
     bool gameStarted;
     int turn;
@@ -27,6 +27,10 @@ private:
 
     int contPlayers;
     vector<Player> players;
+
+    int action;
+    int ammount;
+    int senderPl;
 
     char commCards[5][2] = {{'X'}};
     vector<char> suits;
@@ -39,6 +43,7 @@ private slots:
     void playerConnected();
     void packageReceived();
     void playerDisconnected();
+    void bytesWritten(qint64 bytes);
 
 public:
     explicit PokerGame(QObject *parent = nullptr);
@@ -52,9 +57,21 @@ public:
     bool betsRound();
     char* dealRandomCard(int s);
     void whichHand(Player& p);
+    int findWinner();
+
+    void pkgPlayerEliminated(int nPlayer);
+    void pkgGameOver(int reason);
+    void pkgNewMatch(int nPlayer);
+    void pkgGlobalState();
+    void pkgTurnOf(int nPlayer);
+    void pkgTurnPlayed(int nPlayer, int bet);
+    void pkgCommCards();
+    void pkgOpenCard(int indexCard);
+    void pkgShowdown(int numWinner);
 
 signals:
     void fullRoom();
+    void turnPlayed();
 };
 
 #endif // POKERGAME_H
