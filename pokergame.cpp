@@ -277,16 +277,13 @@ bool PokerGame::betsRound(){
             prevBet = sortedPlayers[i].bet;
         }
         pot = 0; // Subsequent bet rounds will not sum again the general pot
-
-        //Notify the changes (Specific message for each player's pot)
-        pkgGlobalState();
     }
     else{
         for(auto p: players)
-            pot = p.bet;
-        //Notify the changes (General message for all players com. plot)
+            pot += p.bet;
         pkgGlobalState();
     }
+    pkgGlobalState();
     return true;
 }
 
@@ -600,12 +597,6 @@ void PokerGame::bytesWritten(qint64 bytes){
 }
 
 void PokerGame::packageReceived(){
-    // Find the player who sent the package
-
-//    bool endReached = false;
-//    while(!endReached){
-
-//    }
     QTcpSocket* readSocket = qobject_cast<QTcpSocket*>(sender());
     size_t i=0;
     for(;i<players.size(); i++)
@@ -613,65 +604,61 @@ void PokerGame::packageReceived(){
             break;
     Player* player = &players[i];
 
-    QDataStream in;
-    in.setDevice(readSocket);
+    cout << "Bytes recibidos: "<< readSocket->bytesAvailable() << endl;
+
+    QByteArray bytearray = readSocket->readAll();
+    QDataStream in(bytearray);
     in.setVersion(QDataStream::Qt_4_0);
 
-    in.startTransaction();
-    qint8 pkgCode;
-    in >> pkgCode;
+    bool endReached = false;
 
-    if (!in.commitTransaction())
-        return;
-    cout << "Package code: " << (int)pkgCode << endl;
+    while(!endReached){
+        qint8 pkgCode;
+        in >> pkgCode;
 
-    switch(pkgCode){
+        cout << "Package code: " << (int)pkgCode << endl;
 
-    case 1:
-    {
-        in.startTransaction();
-        QString nickname;
-        in >> nickname;
+        switch(pkgCode){
 
-        if (!in.commitTransaction())
-            return;
+        case 1:
+        {
+            QString nickname;
+            in >> nickname;
 
-        player->nickname = nickname.toStdString();
-        contPlayers++;
+            player->nickname = nickname.toStdString();
+            contPlayers++;
 
-        if(contPlayers >= MIN_PLAYERS)
-            emit fullRoom();
+            if(contPlayers >= MIN_PLAYERS)
+                emit fullRoom();
 
-        cout << nickname.toStdString() << contPlayers <<endl;
-        break;
+            cout << nickname.toStdString() << contPlayers <<endl;
+            break;
+        }
+
+        case 6:
+        {
+            qint8 nPlayer;
+            in >> nPlayer;
+            qint8 move;
+            in >> move;
+            qint16 money;
+            in >> money;
+
+            action = move;
+            ammount = money;
+            senderPl = nPlayer;
+
+            emit turnPlayed();
+            break;
+        }
+
+        default:
+            break;
+        }
+
+        if(in.atEnd())
+            endReached = true;
     }
-
-    case 6:
-    {
-        in.startTransaction();
-
-        qint8 nPlayer;
-        in >> nPlayer;
-        qint8 move;
-        in >> move;
-        qint16 money;
-        in >> money;
-
-        if(!in.commitTransaction())
-            return;
-
-        action = move;
-        ammount = money;
-        senderPl = nPlayer;
-
-        emit turnPlayed();
-        break;
-    }
-
-    default:
-        break;
-    }
-
 }
 
 void PokerGame::pkgPlayerEliminated(int nPlayer){
