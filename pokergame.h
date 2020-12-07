@@ -2,6 +2,7 @@
 #define POKERGAME_H
 
 #include <QObject>
+#include <QCoreApplication>
 #include "player.h"
 #include <iostream>
 #include <algorithm>
@@ -18,9 +19,11 @@ class PokerGame : public QObject
     Q_OBJECT
 private:
     static const int INITIAL_BET = 5;
-    static const int MIN_PLAYERS = 3;
+    static const int MIN_PLAYERS = 4;
 
     bool gameStarted;
+    bool sndRound;
+    int playAgainResCount;
     int turn;
     int pot;
     bool subPots;
@@ -43,7 +46,6 @@ private slots:
     void playerConnected();
     void packageReceived();
     void playerDisconnected();
-    void bytesWritten(qint64 bytes);
 
 public:
     explicit PokerGame(QObject *parent = nullptr);
@@ -60,6 +62,7 @@ public:
     int findWinner();
 
     void pkgPlayerEliminated(int nPlayer);
+    void pkgPlayerDisconnected(int nPlayer);
     void pkgGameOver(int reason);
     void pkgNewMatch(int nPlayer);
     void pkgGlobalState();
@@ -68,10 +71,13 @@ public:
     void pkgCommCards();
     void pkgOpenCard(int indexCard);
     void pkgShowdown(int numWinner);
+    void pkgMessage(QString str);
+    void pkgPlayAgain(int index, int res);
 
 signals:
     void fullRoom();
     void turnPlayed();
+    void allPlayersRes();
 };
 
 #endif // POKERGAME_H
